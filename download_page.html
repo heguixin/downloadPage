@@ -1,0 +1,430 @@
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <style>
+        .el-row {
+            margin-bottom: 10px;
+        }
+
+        .el-col {
+            border-radius: 4px;
+        }
+
+        .bg-purple-dark {
+            background: #99a9bf;
+        }
+
+        .bg-purple {
+            background: #d3dce6;
+        }
+
+        .bg-purple-light {
+            background: #e5e9f2;
+        }
+
+        .grid-content {
+            border-radius: 4px;
+            min-height: 36px;
+        }
+
+        .row-bg {
+            padding: 10px 0;
+            background-color: #f9fafc;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <!-- 下载信息详情 -->
+        <div v-show="downloadInforVisible">
+            <el-row>
+                <el-col :span="24">
+                    <div class="grid-content bg-purple-dark">
+                        <span>文件夹大小：{{ unitConversion(downloadCategorySize) }}</span>
+                    </div>
+                </el-col>
+            </el-row>
+            <el-row :gutter="20">
+                <el-col :span="8">
+                    <div class="grid-content bg-purple">
+                        <span>
+                            已下载文件进度：{{ downloadOriginFileCount - downloadFileCount }} / {{ downloadOriginFileCount }}
+                        </span>
+                    </div>
+                </el-col>
+                <el-col :span="8">
+                    <div class="grid-content bg-purple">
+                        <span>等待&正在下载文件数量：{{ downloadFileCount }}</span>
+                    </div>
+                </el-col>
+                <el-col :span="8">
+                    <div class="grid-content bg-purple">
+                        <span>下载文件异常数量：{{ downloadedErrorRecordData.length }}</span>
+                    </div>
+                </el-col>
+            </el-row>
+            <el-row>
+                <el-col :span="24">
+                    <div class="grid-content bg-purple-dark">
+                        <span>请不要关闭标签页，否则会暂停下载流程</span>
+                    </div>
+                </el-col>
+            </el-row>
+        </div>
+
+        <!-- 下载进度详情 -->
+        <el-steps :active="downloadCategoryStep" simple>
+            <el-step title="点击选择种子" icon="el-icon-orange" @click.native="onDownloadCategoryAndMaterialFS"></el-step>
+            <el-step title="选择导出目录" icon="el-icon-folder"></el-step>
+            <el-step title="构建目录" icon="el-icon-folder-opened"></el-step>
+            <el-step title="下载文件" icon="el-icon-document-copy"></el-step>
+            <el-step title="结束" icon="el-icon-s-cooperation"></el-step>
+        </el-steps>
+
+        <el-progress :text-inside="true" :stroke-width="26" :percentage="downloadProgress"></el-progress>
+
+        <!-- 下载记录详情 -->
+        <el-table :data="downloadRecordData" style="width: 100%" height="500" stripe>
+            <el-table-column prop="date" label="时间" width="150"></el-table-column>
+            <el-table-column prop="size" label="大小" width="100"></el-table-column>
+            <el-table-column prop="filePath" label="下载内容"></el-table-column>
+            <el-table-column label="下载进度">
+                <template slot-scope="scope">
+                    <el-progress :text-inside="true" :stroke-width="20"
+                        :percentage="downloadRecordData[scope.$index].progress">
+                    </el-progress>
+                </template>
+            </el-table-column>
+        </el-table>
+
+        <!-- 下载错误记录详情 -->
+        <div v-show="downloadedErrorRecordData.length > 0">
+            <el-row>
+                <el-col :span="24">
+                    <div class="grid-content bg-purple-dark"><span>下载异常文件记录</span></div>
+                </el-col>
+            </el-row>
+            <el-table :data="downloadedErrorRecordData" style="width: 100%" height="500" stripe>
+                <el-table-column prop="date" label="时间" width="100"></el-table-column>
+                <el-table-column prop="status" label="状态码" width="100"></el-table-column>
+                <el-table-column prop="statusText" label="状态" width="120"></el-table-column>
+                <el-table-column prop="size" label="大小" width="100"></el-table-column>
+                <el-table-column prop="filePath" label="下载内容" width="150"></el-table-column>
+                <el-table-column prop="url" label="下载链接"></el-table-column>
+            </el-table>
+        </div>
+    </div>
+</body>
+<!-- 依赖三个库文件 -->
+<script src="https://cdn.jsdelivr.net/npm/vue@2.7.8/dist/vue.js"></script>
+<link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.3/theme-chalk/index.min.css">
+<script src="https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.3/index.min.js"></script>
+
+<script>
+    new Vue({
+        el: '#app',
+        data: {
+            // 通用模块
+            downloadedFileSize: 0,
+            downloadCategorySize: 0,
+            downloadOriginFileCount: 0,
+            downloadFileCount: 0,
+            downloadErrorFileSet: new Set(),
+            downloadInforVisible: false,
+
+            // 下载显示模块
+            downloadCategoryStep: 0,
+            downloadStartTimestamp: 0,
+            downloadProgress: 0,
+            downloadRecordData: [],
+            downloadedErrorRecordData: [],
+
+            // 下载信息模块
+            dirList: [],
+            fileList: [],
+            dirDict: {},
+        },
+
+        mounted() {
+        },
+
+        watch: {
+            downloadFileCount(newVal, oldVal) {
+                if (newVal == 0 && oldVal == 1) {
+                    this.downloadCategoryStep++
+                    this.closeDownloadDialog()
+                }
+            }
+        },
+
+        methods: {
+            // 通用函数
+            sleep(time = 1000) {
+                return new Promise(resolve => {
+                    setTimeout(resolve, time);
+                });
+            },
+
+            getClock() {
+                let date = new Date();
+                let h = date.getHours();
+                h = h < 10 ? "0" + h : h;
+                let m = date.getMinutes();
+                m = m < 10 ? "0" + m : m;
+                let s = date.getSeconds();
+                s = s < 10 ? "0" + s : s;
+                return h + ":" + m + ":" + s;
+            },
+
+            unitConversion(val) {
+                if (val > 1073741824) {
+                    return (val / 1073741824).toFixed(2) + "GB"
+                } else if (val > 1048576) {
+                    return (val / 1048576).toFixed(1) + "MB"
+                } else if (val > 1024) {
+                    return (val / 1024).toFixed(0) + "KB"
+                } else {
+                    return val + "B"
+                }
+            },
+
+            async getFileDownloadProgress(stream, recordData, fileSize) {
+                let total = 0;
+                const reader = stream.getReader();
+                const read = () => reader.read().then(({ value, done }) => {
+                    if (done) return;
+                    total += value.length;
+                    recordData.progress = parseFloat((total / fileSize * 100).toFixed(2))
+                    read();
+                });
+                read();
+            },
+
+            // 下载文件夹
+            onDownloadCategoryAndMaterialFS() {
+                let that = this
+                if (that.downloadCategoryStep == 3 || that.downloadCategoryStep == 4) {
+                    return
+                }
+                that.initDownloadDialog()
+
+                that.parseSeedInfor()
+                    .then(() => {
+                        that.downloadInforVisible = true
+                        let tipText = '<p>压缩包大小预估:' + that.unitConversion(that.downloadCategorySize) + '</p>' +
+                            '<p>文件个数:' + that.downloadFileCount + '</p>' +
+                            '<br/>' +
+                            '<p><strong>下载开始后，不可关闭当前页面，否则将会中断下载任务！<strong></p>' +
+                            '<p>尽可能下载所有文件，异常文件会打印错误记录，截图联系管理员!</p>'
+
+                        that.$alert(tipText, '下载确认',
+                            {
+                                confirmButtonText: '确定',
+                                dangerouslyUseHTMLString: true,
+                                callback: action => {
+                                    if (action === 'confirm') {
+                                        that.downloadCategoryStep++
+                                        that.downloadCategoryAndMaterialFS()
+                                    }
+                                }
+                            }
+                        )
+                    })
+                    .catch(error => {
+                        that.$notify.warning({ title: '取消', message: '取消选择种子' })
+                    })
+            },
+
+            downloadCategoryAndMaterialFS() {
+                let that = this
+
+                that.downloadCategory()
+                    .then(() => {
+                        that.downloadStartTimestamp = Date.parse(new Date()) / 1000
+                        that.downloadFile()
+                    })
+                    .catch(error => {
+                        that.$notify.warning({ title: '取消', message: '取消选择导出目录' })
+                    })
+            },
+
+            initDownloadDialog() {
+                let that = this
+                // 通用模块
+                that.downloadedFileSize = 0
+                that.downloadCategorySize = 0
+                that.downloadFileCount = 0
+                that.downloadErrorFileSet = new Set()
+                that.downloadInforVisible = false
+
+                // 下载显示模块
+                that.downloadCategoryStep = 0
+                that.downloadProgress = 0
+                that.downloadRecordData = []
+                that.downloadedErrorRecordData = []
+
+                // 下载信息模块
+                that.dirDict = {}
+            },
+
+            // 下载记录相关
+            async closeDownloadDialog() {
+                let that = this
+                let end = Date.parse(new Date()) / 1000
+
+                // 打印错误的统计信息
+                if (that.downloadErrorFileSet.size > 0) {
+                    let warningMessage = ''
+                    for (let filePath of that.downloadErrorFileSet) {
+                        warningMessage += '<p>文件:' + filePath + '</p>'
+                    }
+                    warningMessage += '<p>共计:' + that.downloadErrorFileSet.size + '(个)</p>'
+
+                    that.$notify.warning({
+                        title: '文件异常列表统计(无下载)',
+                        message: warningMessage,
+                        duration: 0,
+                        dangerouslyUseHTMLString: true,
+                    })
+                }
+
+                // 打印下载结果，允许关闭页面
+                await that.sleep(1000)
+                that.downloadCategoryStep++
+                that.downloadProgress = 100
+                that.$notify.success({
+                    title: '完成',
+                    message: '耗时(s):' + (end - that.downloadStartTimestamp),
+                    duration: 0
+                })
+            },
+
+            pushDownloadProgress(fileSize) {
+                let that = this
+
+                that.downloadFileCount -= 1
+                that.downloadedFileSize += fileSize
+                that.downloadProgress = parseFloat((that.downloadedFileSize / that.downloadCategorySize * 100).toFixed(2))
+            },
+
+            recordDownloadCategoryData(filePath, fileSize, teeProgress) {
+                let that = this
+                let clock = that.getClock()
+
+                let recordData = { 'date': clock, 'filePath': filePath, 'size': that.unitConversion(fileSize), 'progress': 0 }
+                that.downloadRecordData.push(recordData)
+                that.getFileDownloadProgress(teeProgress, recordData, fileSize)
+            },
+
+            notifyDownloadError(filePath, status, statusText, fileSize, fileUrl) {
+                let that = this
+                that.downloadErrorFileSet.add(filePath)
+                that.downloadedErrorRecordData.push({
+                    'date': that.getClock(),
+                    'status': status,
+                    'statusText': statusText,
+                    'size': that.unitConversion(fileSize),
+                    'filePath': filePath,
+                    'url': fileUrl,
+                })
+
+                // 是否需要打印出来异常的文件
+                // let errTip = '<p>文件:</p><p>' + filePath + '</p>' +
+                //     '<p>状态码:' + status + '</p>' +
+                //     '<p>状态信息:' + statusText + '</p>'
+                // that.$notify.error({
+                //     title: '文件异常',
+                //     message: errTip,
+                //     duration: 0,
+                //     dangerouslyUseHTMLString: true,
+                // })
+            },
+
+            async parseSeedInfor() {
+                let that = this
+                let [fileHandle] = await window.showOpenFilePicker()
+                let seedDict = {}
+
+                //获取文件
+                const file = await fileHandle.getFile()
+
+                //读取文件内容
+                seedDict = JSON.parse(await file.text())
+                that.dirList = seedDict['dirList']
+                that.fileList = seedDict['fileList']
+                that.downloadCategorySize = seedDict['downloadCategorySize']
+                that.downloadFileCount = seedDict['downloadFileCount']
+                that.downloadOriginFileCount = that.downloadFileCount
+            },
+
+            async downloadCategory() {
+                let that = this
+                let currentDirHandle = await window.showDirectoryPicker()
+                that.downloadCategoryStep++
+
+                for (let dir of that.dirList) {
+                    if (dir['parent_id'] == 0) {
+                        that.dirDict[dir['id']] = await currentDirHandle.getDirectoryHandle(dir['name'], { create: true })
+                        continue
+                    }
+                    that.dirDict[dir['id']] = await that.dirDict[dir['parent_id']].getDirectoryHandle(dir['name'], { create: true })
+                }
+            },
+
+            async downloadFile() {
+                let that = this
+                that.downloadCategoryStep++
+
+                for (let file of that.fileList) {
+                    let fileHandle = await that.dirDict[file['last_category_id']].getFileHandle(file['name'], { create: true });
+                    that.writeURLToFile(fileHandle, file['url'], file['path'], file['size'])
+                }
+            },
+
+            // 下载文件的工具函数
+            async writeFile(fileHandle, contents) {
+                // Create a FileSystemWritableFileStream to write to.
+                const writable = await fileHandle.createWritable();
+                // Write the contents of the file to the stream.
+                await writable.write(contents);
+                // Close the file and write the contents to disk.
+                await writable.close();
+            },
+
+            async writeURLToFile(fileHandle, url, path, size) {
+                let that = this
+                // Create a FileSystemWritableFileStream to write to.
+                const writable = await fileHandle.createWritable()
+                // Make an HTTP request for the contents.
+                const { ok, status, statusText, body } = await fetch(url)
+
+                if (!ok) {
+                    that.notifyDownloadError(path, status, statusText, size, url)
+                    that.pushDownloadProgress(size)
+                    writable.close()
+                    return
+                }
+
+                const [teeProgress, teeWrite] = body.tee()
+
+                // 记录每一个文件的下载进度
+                that.recordDownloadCategoryData(path, size, teeProgress)
+
+                // 流式保存文件和记录总进度
+                // Stream the response into the file.
+                await teeWrite.pipeTo(writable).finally(() => {
+                    that.pushDownloadProgress(size)
+                });
+                // pipeTo() closes the destination pipe by default, no need to close it.
+            }
+        }
+    })
+    /*
+    * File System APi
+    * API参考地址：https://developer.mozilla.org/en-US/docs/Web/API/window/showOpenFilePicker
+    */
+</script>
+
+</html>
