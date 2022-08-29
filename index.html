@@ -121,6 +121,7 @@
 <script src="https://cdn.jsdelivr.net/npm/vue@2.7.8/dist/vue.js"></script>
 <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.3/theme-chalk/index.min.css">
 <script src="https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.3/index.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
 
 <script>
     new Vue({
@@ -202,6 +203,15 @@
                 read();
             },
 
+            AES_ECB_DECRYPT(textBase64, secretKey) {
+                var keyHex = CryptoJS.enc.Base64.parse(secretKey);
+                var decrypt = CryptoJS.AES.decrypt(textBase64, keyHex, {
+                    "mode": CryptoJS.mode.ECB,
+                    "padding": CryptoJS.pad.Pkcs7
+                });
+                return CryptoJS.enc.Utf8.stringify(decrypt);
+            },
+
             // 下载文件夹
             onDownloadCategoryAndMaterialFS() {
                 let that = this
@@ -233,7 +243,7 @@
                         )
                     })
                     .catch(error => {
-                        that.$notify.warning({ title: '取消', message: '取消选择种子' })
+                        that.$notify.warning({ title: '取消', message: error })
                     })
             },
 
@@ -350,13 +360,35 @@
                 //获取文件
                 const file = await fileHandle.getFile()
 
-                //读取文件内容
-                seedDict = JSON.parse(await file.text())
-                that.dirList = seedDict['dirList']
-                that.fileList = seedDict['fileList']
-                that.downloadCategorySize = seedDict['downloadCategorySize']
-                that.downloadFileCount = seedDict['downloadFileCount']
-                that.downloadOriginFileCount = that.downloadFileCount
+                return that.$prompt('请输入提取码', '提示', {
+                    confirmButtonText: '确定',
+                    cancelButtonText: '取消',
+                    inputPattern: /[0-9a-zA-Z]{43}/,
+                    inputErrorMessage: '密码格式不正确'
+                }).then(async ({ value, action }) => {
+                    if (action == 'confirm') {
+                        //读取文件内容
+                        let text = await file.text()
+                        seedDict = JSON.parse(that.AES_ECB_DECRYPT(text, value))
+                        that.dirList = seedDict['dirList']
+                        that.fileList = seedDict['fileList']
+                        that.downloadCategorySize = seedDict['downloadCategorySize']
+                        that.downloadFileCount = seedDict['downloadFileCount']
+                        that.downloadOriginFileCount = that.downloadFileCount
+                        that.$message({
+                            type: 'success',
+                            message: '解密成功'
+                        });
+                    }
+                    else {
+                        that.$message({
+                            type: 'success',
+                            message: '取消输入'
+                        });
+                    }
+                }).catch(() => {
+                    throw '密码错误'
+                });
             },
 
             async downloadCategory() {
