@@ -432,7 +432,12 @@
                 // Create a FileSystemWritableFileStream to write to.
                 const writable = await fileHandle.createWritable()
                 // Make an HTTP request for the contents.
-                const { ok, status, statusText, body } = await fetch(url)
+                const { ok, status, statusText, body } = await fetch(
+                    url,
+                    {
+                        cache: "no-store"
+                    }
+                )
 
                 if (!ok) {
                     that.notifyDownloadError(path, status, statusText, size, url)
