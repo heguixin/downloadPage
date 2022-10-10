@@ -195,6 +195,10 @@
 
             async getFileDownloadProgress(stream, recordData, fileSize) {
                 let total = 0;
+                if(fileSize == 0){
+                    recordData.progress = 100
+                    return
+                }
                 const reader = stream.getReader();
                 const read = () => reader.read().then(({ value, done }) => {
                     if (done) return;
