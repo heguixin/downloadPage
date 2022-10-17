@@ -2,8 +2,8 @@
 
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <!-- 决定是否转换http请求为https请求 -->
     <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
-
     <style>
         .el-row {
             margin-bottom: 10px;
@@ -145,9 +145,10 @@
             downloadedErrorRecordData: [],
 
             // 下载信息模块
-            dirList: [],
+            dirDict: [],
+            dirPathDict: { 0: '' },
             fileList: [],
-            dirDict: {},
+            dirHandleDict: {},
         },
 
         mounted() {
@@ -182,6 +183,11 @@
             },
 
             unitConversion(val) {
+                // 特殊处理：用Infinity来代表该文件的大小未知，未知可能是因为资源服务器并不告诉前端资源的大小
+                if (val == Infinity) {
+                    return "未知大小"
+                }
+
                 if (val > 1073741824) {
                     return (val / 1073741824).toFixed(2) + "GB"
                 } else if (val > 1048576) {
@@ -193,17 +199,23 @@
                 }
             },
 
+            formatProgress(percentage) {
+                return percentage > 100 ? 100 : percentage;
+            },
+
             async getFileDownloadProgress(stream, recordData, fileSize) {
+                let that = this
                 let total = 0;
-                if(fileSize == 0){
-                    recordData.progress = 100
-                    return
-                }
                 const reader = stream.getReader();
                 const read = () => reader.read().then(({ value, done }) => {
-                    if (done) return;
+                    if (done) {
+                        recordData.progress = 100
+                        return
+                    }
                     total += value.length;
-                    recordData.progress = parseFloat((total / fileSize * 100).toFixed(2))
+                    // headers有可能不告知大小，然后让progress超过100的进度引发错误，所以最高进度设置为100防止抛出错误
+                    let now_progress = parseFloat((total / fileSize * 100).toFixed(2))
+                    recordData.progress = that.formatProgress(now_progress)
                     read();
                 });
                 read();
@@ -282,7 +294,8 @@
                 that.downloadedErrorRecordData = []
 
                 // 下载信息模块
-                that.dirDict = {}
+                that.dirHandleDict = {}
+                that.dirPathDict = { 0: '' }
             },
 
             // 下载记录相关
@@ -319,10 +332,21 @@
 
             pushDownloadProgress(fileSize) {
                 let that = this
+                let now_progress = 0
 
                 that.downloadFileCount -= 1
-                that.downloadedFileSize += fileSize
-                that.downloadProgress = parseFloat((that.downloadedFileSize / that.downloadCategorySize * 100).toFixed(2))
+                // 如果是未知目录大小，总进度条就按照文件个数推进
+                // 如果是已知目录大小，总进度条就按照目录大小推进
+                if (that.downloadCategorySize == Infinity) {
+                    now_progress = parseFloat(((that.downloadOriginFileCount - that.downloadFileCount) / that.downloadOriginFileCount * 100).toFixed(2))
+                    // 防止进度条溢出
+                    that.downloadProgress = that.formatProgress(now_progress)
+                } else {
+                    that.downloadedFileSize += fileSize == Infinity ? 0 : fileSize
+                    now_progress = parseFloat((that.downloadedFileSize / that.downloadCategorySize * 100).toFixed(2))
+                    // 防止进度条溢出
+                    that.downloadProgress = that.formatProgress(now_progress)
+                }
             },
 
             recordDownloadCategoryData(filePath, fileSize, teeProgress) {
@@ -375,11 +399,14 @@
                     if (action == 'confirm') {
                         //读取文件内容
                         let text = await file.text()
+                        // 解密
                         seedDict = JSON.parse(that.AES_ECB_DECRYPT(text, value))
-                        that.dirList = seedDict['dirList']
+                        that.dirDict = seedDict['dirDict']
                         that.fileList = seedDict['fileList']
-                        that.downloadCategorySize = seedDict['downloadCategorySize']
-                        that.downloadFileCount = seedDict['downloadFileCount']
+                        // 如果是未知目录大小，总进度条就按照文件个数推进
+                        // 如果是已知目录大小，总进度条就按照目录大小推进
+                        that.downloadCategorySize = seedDict['downloadCategorySize'] == undefined ? Infinity : seedDict['downloadCategorySize']
+                        that.downloadFileCount = seedDict['fileList'].length
                         that.downloadOriginFileCount = that.downloadFileCount
                         that.$message({
                             type: 'success',
@@ -397,17 +424,25 @@
                 });
             },
 
+            async createCategoryLoop(currentDirHandle, currentDir, preDirPath) {
+                let that = this
+                that.dirHandleDict[currentDir['id']] = await currentDirHandle.getDirectoryHandle(currentDir['name'], { create: true })
+                that.dirPathDict[currentDir['id']] = preDirPath + currentDir['name'] + '/'
+
+                if (currentDir['children'].length > 0) {
+                    for (let child_dir of currentDir['children']) {
+                        await that.createCategoryLoop(that.dirHandleDict[currentDir['id']], child_dir, that.dirPathDict[currentDir['id']])
+                    }
+                }
+            },
+
             async downloadCategory() {
                 let that = this
                 let currentDirHandle = await window.showDirectoryPicker()
                 that.downloadCategoryStep++
 
-                for (let dir of that.dirList) {
-                    if (dir['parent_id'] == 0) {
-                        that.dirDict[dir['id']] = await currentDirHandle.getDirectoryHandle(dir['name'], { create: true })
-                        continue
-                    }
-                    that.dirDict[dir['id']] = await that.dirDict[dir['parent_id']].getDirectoryHandle(dir['name'], { create: true })
+                for (let dir of that.dirDict["children"]) {
+                    await that.createCategoryLoop(currentDirHandle, dir, '')
                 }
             },
 
@@ -416,8 +451,8 @@
                 that.downloadCategoryStep++
 
                 for (let file of that.fileList) {
-                    let fileHandle = await that.dirDict[file['last_category_id']].getFileHandle(file['name'], { create: true });
-                    that.writeURLToFile(fileHandle, file['url'], file['path'], file['size'])
+                    let fileHandle = await that.dirHandleDict[file['last_category_id']].getFileHandle(file['name'], { create: true });
+                    that.writeURLToFile(fileHandle, file['url'], that.dirPathDict[file['last_category_id']] + file['name'], file['size'])
                 }
             },
 
@@ -436,16 +471,20 @@
                 // Create a FileSystemWritableFileStream to write to.
                 const writable = await fileHandle.createWritable()
                 // Make an HTTP request for the contents.
-                const { ok, status, statusText, body } = await fetch(
+                const { ok, status, statusText, headers, body } = await fetch(
                     url,
                     {
+                        // 禁用下载时利用缓存，任何一个资源都触发单独的下载
                         cache: "no-store"
                     }
                 )
+                let fileSize = parseInt(headers.get("Content-Length"))
+                // 优先相信报文头部反馈的大小，次之相信种子文件给予的大小，最后用Infinity来代表未知大小
+                fileSize = isNaN(fileSize) ? (size == undefined ? Infinity : size) : fileSize
 
                 if (!ok) {
-                    that.notifyDownloadError(path, status, statusText, size, url)
-                    that.pushDownloadProgress(size)
+                    that.notifyDownloadError(path, status, statusText, fileSize, url)
+                    that.pushDownloadProgress(fileSize)
                     writable.close()
                     return
                 }
@@ -453,12 +492,12 @@
                 const [teeProgress, teeWrite] = body.tee()
 
                 // 记录每一个文件的下载进度
-                that.recordDownloadCategoryData(path, size, teeProgress)
+                that.recordDownloadCategoryData(path, fileSize, teeProgress)
 
                 // 流式保存文件和记录总进度
                 // Stream the response into the file.
                 await teeWrite.pipeTo(writable).finally(() => {
-                    that.pushDownloadProgress(size)
+                    that.pushDownloadProgress(fileSize)
                 });
                 // pipeTo() closes the destination pipe by default, no need to close it.
             }
