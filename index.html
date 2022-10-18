@@ -211,14 +211,14 @@
                 // 中文字符：～！¥（）「」：｜《》？，。
 
                 // 已知以下字符是不合乎规范的
-                // 英文字符：~*:<>
-                let illegalCharList = name.match(/[~*:<>]/g)
+                // 英文字符：~*:<>?|
+                let illegalCharList = name.match(/[~*:<>?|]/g)
                 if (illegalCharList != null) {
                     let warningMessage =
                         '<p>修改前目录名:' + name + '</p>' +
                         '<p>非法字符列表（转为-）[' + illegalCharList.join(',') + ']</p>' +
                         '<p>非法字符个数:' + illegalCharList.length + '</p>' +
-                        '<p>修改后目录路径:' + prePath + name.replace(/[~*:<>]/g, '-') + '/' + '</p>'
+                        '<p>修改后目录路径:' + prePath + name.replace(/[~*:<>?|]/g, '-') + '/' + '</p>'
 
                     that.$notify.warning({
                         title: '以下目录的名字已经修改',
@@ -227,7 +227,7 @@
                         dangerouslyUseHTMLString: true,
                     })
                 }
-                return name.replace(/[~*:<>]/g, '-')
+                return name.replace(/[~*:<>?|]/g, '-')
             },
 
             async getFileDownloadProgress(stream, recordData, fileSize) {
