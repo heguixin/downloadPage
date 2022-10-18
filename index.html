@@ -203,6 +203,33 @@
                 return percentage > 100 ? 100 : percentage;
             },
 
+            // 把名字转变为一个合乎规范文件系统的名字
+            formatName(name, prePath) {
+                let that = this
+                // 已知以下字符是合乎规范的
+                // 英文字符：!@#$%^&()[]{}+-.,
+                // 中文字符：～！¥（）「」：｜《》？，。
+
+                // 已知以下字符是不合乎规范的
+                // 英文字符：~*:<>
+                let illegalCharList = name.match(/[~*:<>]/g)
+                if (illegalCharList != null) {
+                    let warningMessage =
+                        '<p>修改前目录名:' + name + '</p>' +
+                        '<p>非法字符列表（转为-）[' + illegalCharList.join(',') + ']</p>' +
+                        '<p>非法字符个数:' + illegalCharList.length + '</p>' +
+                        '<p>修改后目录路径:' + prePath + name.replace(/[~*:<>]/g, '-') + '/' + '</p>'
+
+                    that.$notify.warning({
+                        title: '以下目录的名字已经修改',
+                        message: warningMessage,
+                        duration: 0,
+                        dangerouslyUseHTMLString: true,
+                    })
+                }
+                return name.replace(/[~*:<>]/g, '-')
+            },
+
             async getFileDownloadProgress(stream, recordData, fileSize) {
                 let that = this
                 let total = 0;
@@ -274,7 +301,7 @@
                         that.downloadFile()
                     })
                     .catch(error => {
-                        that.$notify.warning({ title: '取消', message: '取消选择导出目录' })
+                        that.$notify.warning({ title: '取消', message: error })
                     })
             },
 
@@ -426,8 +453,9 @@
 
             async createCategoryLoop(currentDirHandle, currentDir, preDirPath) {
                 let that = this
-                that.dirHandleDict[currentDir['id']] = await currentDirHandle.getDirectoryHandle(currentDir['name'], { create: true })
-                that.dirPathDict[currentDir['id']] = preDirPath + currentDir['name'] + '/'
+                let cur_name = that.formatName(currentDir['name'], preDirPath)
+                that.dirHandleDict[currentDir['id']] = await currentDirHandle.getDirectoryHandle(cur_name, { create: true })
+                that.dirPathDict[currentDir['id']] = preDirPath + cur_name + '/'
 
                 if (currentDir['children'].length > 0) {
                     for (let child_dir of currentDir['children']) {
