@@ -2,8 +2,6 @@
 
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <!-- 决定是否转换http请求为https请求 -->
-    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
     <style>
         .el-row {
             margin-bottom: 10px;
@@ -129,6 +127,9 @@
     new Vue({
         el: '#app',
         data: {
+            // 设置模块
+            USEPASSWORD: true,
+            USEHTTPS: true,
             // 通用模块
             downloadedFileSize: 0,
             downloadCategorySize: 0,
@@ -228,6 +229,10 @@
                     })
                 }
                 return name.replace(/[~*:<>?|]/g, '-')
+            },
+
+            formatUrl(url) {
+                return this.USEHTTPS ? url.replace("http://", "https://") : url
             },
 
             async getFileDownloadProgress(stream, recordData, fileSize) {
@@ -417,38 +422,55 @@
                 //获取文件
                 const file = await fileHandle.getFile()
 
-                return that.$prompt('请输入提取码', '提示', {
-                    confirmButtonText: '确定',
-                    cancelButtonText: '取消',
-                    inputPattern: /[0-9a-zA-Z]{43}/,
-                    inputErrorMessage: '密码格式不正确'
-                }).then(async ({ value, action }) => {
-                    if (action == 'confirm') {
-                        //读取文件内容
-                        let text = await file.text()
-                        // 解密
-                        seedDict = JSON.parse(that.AES_ECB_DECRYPT(text, value))
-                        that.dirDict = seedDict['dirDict']
-                        that.fileList = seedDict['fileList']
-                        // 如果是未知目录大小，总进度条就按照文件个数推进
-                        // 如果是已知目录大小，总进度条就按照目录大小推进
-                        that.downloadCategorySize = seedDict['downloadCategorySize'] == undefined ? Infinity : seedDict['downloadCategorySize']
-                        that.downloadFileCount = seedDict['fileList'].length
-                        that.downloadOriginFileCount = that.downloadFileCount
-                        that.$message({
-                            type: 'success',
-                            message: '解密成功'
-                        });
-                    }
-                    else {
-                        that.$message({
-                            type: 'success',
-                            message: '取消输入'
-                        });
-                    }
-                }).catch(() => {
-                    throw '密码错误'
-                });
+                if (that.USEPASSWORD) {
+                    return that.$prompt('请输入提取码', '提示', {
+                        confirmButtonText: '确定',
+                        cancelButtonText: '取消',
+                        inputPattern: /[0-9a-zA-Z]{43}/,
+                        inputErrorMessage: '密码格式不正确'
+                    }).then(async ({ value, action }) => {
+                        if (action == 'confirm') {
+                            //读取文件内容
+                            let text = await file.text()
+                            // 解密
+                            seedDict = JSON.parse(that.AES_ECB_DECRYPT(text, value))
+                            that.dirDict = seedDict['dirDict']
+                            that.fileList = seedDict['fileList']
+                            // 如果是未知目录大小，总进度条就按照文件个数推进
+                            // 如果是已知目录大小，总进度条就按照目录大小推进
+                            that.downloadCategorySize = seedDict['downloadCategorySize'] == undefined ? Infinity : seedDict['downloadCategorySize']
+                            that.downloadFileCount = seedDict['fileList'].length
+                            that.downloadOriginFileCount = that.downloadFileCount
+                            that.$message({
+                                type: 'success',
+                                message: '解密成功'
+                            });
+                        }
+                        else {
+                            that.$message({
+                                type: 'success',
+                                message: '取消输入'
+                            });
+                        }
+                    }).catch(() => {
+                        throw '密码错误'
+                    });
+                } else {
+                    let text = await file.text()
+                    // 解密
+                    seedDict = JSON.parse(text)
+                    that.dirDict = seedDict['dirDict']
+                    that.fileList = seedDict['fileList']
+                    // 如果是未知目录大小，总进度条就按照文件个数推进
+                    // 如果是已知目录大小，总进度条就按照目录大小推进
+                    that.downloadCategorySize = seedDict['downloadCategorySize'] == undefined ? Infinity : seedDict['downloadCategorySize']
+                    that.downloadFileCount = seedDict['fileList'].length
+                    that.downloadOriginFileCount = that.downloadFileCount
+                    that.$message({
+                        type: 'success',
+                        message: '解密成功'
+                    });
+                }
             },
 
             async createCategoryLoop(currentDirHandle, currentDir, preDirPath) {
@@ -496,6 +518,7 @@
 
             async writeURLToFile(fileHandle, url, path, size) {
                 let that = this
+                url = that.formatUrl(url)
                 // Create a FileSystemWritableFileStream to write to.
                 const writable = await fileHandle.createWritable()
                 // Make an HTTP request for the contents.
