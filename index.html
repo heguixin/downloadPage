@@ -51,7 +51,7 @@
                 <el-col :span="8">
                     <div class="grid-content bg-purple">
                         <span>
-                            已下载文件进度：{{ downloadOriginFileCount - downloadFileCount }} / {{ downloadOriginFileCount }}
+                            已下载文件进度：{{ downloadStartFileCount - downloadFileCount }} / {{ downloadStartFileCount }}
                         </span>
                     </div>
                 </el-col>
@@ -78,6 +78,7 @@
         <!-- 下载进度详情 -->
         <el-steps :active="downloadCategoryStep" simple>
             <el-step title="点击选择种子" icon="el-icon-orange" @click.native="onDownloadCategoryAndMaterialFS"></el-step>
+            <el-step title="选择/查看下载资源" icon="el-icon-s-management" @click.native="SelectAndSeeSeed"></el-step>
             <el-step title="选择导出目录" icon="el-icon-folder"></el-step>
             <el-step title="构建目录" icon="el-icon-folder-opened"></el-step>
             <el-step title="下载文件" icon="el-icon-document-copy"></el-step>
@@ -116,6 +117,34 @@
                 <el-table-column prop="url" label="下载链接"></el-table-column>
             </el-table>
         </div>
+
+        <el-drawer size="75%" title="即将下载以下内容" :visible.sync="drawerVisible" direction="btt">
+            <el-container>
+                <el-container width="80%">
+                    <div>
+                        <span>目录列表</span>
+                        <el-tree ref='categoryTree' :data="dirDict['children']" highlight-current show-checkbox
+                            check-strictly node-key="id" @node-click="handleCategoryClick" :default-expand-all='true'
+                            @check="handleCategoryCheckChange" :default-checked-keys="categoryTreeCheckedId"
+                            :props="{label: 'name'}">
+                        </el-tree>
+                    </div>
+                </el-container>
+                <el-container width="20%" v-show="fileTreedata.length > 0">
+                    <div>
+                        <span>文件列表</span>
+                        <el-tree ref='fileTree' :data="fileTreedata" show-checkbox node-key="id"
+                            @check="handleFileCheckChange" :default-checked-keys="fileTreeCheckedId"
+                            :props="{label: 'name'}">
+                        </el-tree>
+                    </div>
+                </el-container>
+            </el-container>
+            <el-footer style="text-align: center;">
+                <el-button type="success" @click="onSubmitSeed" v-show="downloadCategoryStep <= 1">确定下载
+                </el-button>
+            </el-footer>
+        </el-drawer>
     </div>
 </body>
 <!-- 依赖三个库文件 -->
@@ -133,13 +162,23 @@
             USEHTTPS: true,
             WRITEHANDLELIMIT: 6,
             // 通用模块
+            DOWNLOADINGIDLIST: [3, 4],
             downloadedFileSize: 0,
             downloadCategorySize: 0,
             downloadOriginFileCount: 0,
+            downloadStartFileCount: 0,
             downloadFileCount: 0,
             downloadErrorFileSet: new Set(),
             downloadInforVisible: false,
             writeHandleNum: 0,
+
+            // 选择/查看下载资源
+            drawerVisible: false,
+            fileTreedata: [],
+            categoryTreeCheckedId: [],
+            fileTreeCheckedId: [],
+            discardCategoryIdSet: new Set(),
+            discardFileIdSet: new Set(),
 
             // 下载显示模块
             downloadCategoryStep: 0,
@@ -266,40 +305,6 @@
             },
 
             // 下载文件夹
-            onDownloadCategoryAndMaterialFS() {
-                let that = this
-                if (that.downloadCategoryStep == 3 || that.downloadCategoryStep == 4) {
-                    return
-                }
-                that.initDownloadDialog()
-
-                that.parseSeedInfor()
-                    .then(() => {
-                        that.downloadInforVisible = true
-                        let tipText = '<p>压缩包大小预估:' + that.unitConversion(that.downloadCategorySize) + '</p>' +
-                            '<p>文件个数:' + that.downloadFileCount + '</p>' +
-                            '<br/>' +
-                            '<p><strong>下载开始后，不可关闭当前页面，否则将会中断下载任务！<strong></p>' +
-                            '<p>尽可能下载所有文件，异常文件会打印错误记录，截图联系管理员!</p>'
-
-                        that.$alert(tipText, '下载确认',
-                            {
-                                confirmButtonText: '确定',
-                                dangerouslyUseHTMLString: true,
-                                callback: action => {
-                                    if (action === 'confirm') {
-                                        that.downloadCategoryStep++
-                                        that.downloadCategoryAndMaterialFS()
-                                    }
-                                }
-                            }
-                        )
-                    })
-                    .catch(error => {
-                        that.$notify.warning({ title: '取消', message: error })
-                    })
-            },
-
             downloadCategoryAndMaterialFS() {
                 let that = this
 
@@ -313,15 +318,85 @@
                     })
             },
 
+            onSubmitSeed() {
+                let that = this
+                that.downloadFileCount = that.downloadOriginFileCount - that.discardFileIdSet.size
+                that.downloadStartFileCount = that.downloadFileCount
+                // 如果有剔除文件，那么文件夹的大小就是未知，以文件个数来推进总进度
+                if (that.discardFileIdSet.size > 0) {
+                    that.downloadCategorySize = Infinity
+                }
+                let tipText = '<p>压缩包大小预估:' + that.unitConversion(that.downloadCategorySize) + '</p>' +
+                    '<p>文件个数:' + that.downloadFileCount + '</p>' +
+                    '<br/>' +
+                    '<p><strong>下载开始后，不可关闭当前页面，否则将会中断下载任务！<strong></p>' +
+                    '<p>尽可能下载所有文件，异常文件会打印错误记录，截图联系管理员!</p>'
+
+                that.$alert(tipText, '下载确认',
+                    {
+                        confirmButtonText: '确定',
+                        dangerouslyUseHTMLString: true,
+                        callback: action => {
+                            if (action === 'confirm') {
+                                that.downloadCategoryStep++
+                                that.drawerVisible = false
+                                that.downloadCategoryAndMaterialFS()
+                            }
+                        }
+                    }
+                )
+            },
+
+            onDownloadCategoryAndMaterialFS() {
+                let that = this
+                if (that.DOWNLOADINGIDLIST.indexOf(that.downloadCategoryStep) > -1) {
+                    return
+                } 
+                else if(that.downloadCategoryStep > 0){
+                    location.reload()
+                    return
+                }
+                that.initDownloadDialog()
+
+                that.parseSeedInfor()
+                    .then(() => {
+                        that.downloadCategoryStep++
+                        that.formatSeedData()
+                        that.drawerVisible = true
+                        that.downloadInforVisible = true
+                    })
+                    .catch(error => {
+                        that.$notify.warning({ title: '取消', message: error })
+                    })
+            },
+
+            SelectAndSeeSeed() {
+                let that = this
+                if (that.downloadCategoryStep == 0) {
+                    return
+                }
+                that.drawerVisible = true
+            },
+
             initDownloadDialog() {
                 let that = this
                 // 通用模块
                 that.downloadedFileSize = 0
                 that.downloadCategorySize = 0
+                that.downloadOriginFileCount = 0
+                that.downloadStartFileCount = 0
                 that.downloadFileCount = 0
                 that.downloadErrorFileSet = new Set()
                 that.downloadInforVisible = false
                 that.writeHandleNum = 0
+
+                // 选择/查看下载资源
+                that.drawerVisible = false
+                that.fileTreedata = []
+                that.categoryTreeCheckedId = []
+                that.fileTreeCheckedId = []
+                that.discardCategoryIdSet.clear()
+                that.discardFileIdSet.clear()
 
                 // 下载显示模块
                 that.downloadCategoryStep = 0
@@ -374,7 +449,7 @@
                 // 如果是未知目录大小，总进度条就按照文件个数推进
                 // 如果是已知目录大小，总进度条就按照目录大小推进
                 if (that.downloadCategorySize == Infinity) {
-                    now_progress = parseFloat(((that.downloadOriginFileCount - that.downloadFileCount) / that.downloadOriginFileCount * 100).toFixed(2))
+                    now_progress = parseFloat(((that.downloadStartFileCount - that.downloadFileCount) / that.downloadStartFileCount * 100).toFixed(2))
                     // 防止进度条溢出
                     that.downloadProgress = that.formatProgress(now_progress)
                 } else {
@@ -451,6 +526,7 @@
                             // 如果是已知目录大小，总进度条就按照目录大小推进
                             that.downloadCategorySize = seedDict['downloadCategorySize'] == undefined ? Infinity : seedDict['downloadCategorySize']
                             that.downloadFileCount = seedDict['fileList'].length
+                            that.downloadStartFileCount = that.downloadFileCount
                             that.downloadOriginFileCount = that.downloadFileCount
                             that.$message({
                                 type: 'success',
@@ -476,6 +552,7 @@
                     // 如果是已知目录大小，总进度条就按照目录大小推进
                     that.downloadCategorySize = seedDict['downloadCategorySize'] == undefined ? Infinity : seedDict['downloadCategorySize']
                     that.downloadFileCount = seedDict['fileList'].length
+                    that.downloadStartFileCount = that.downloadFileCount
                     that.downloadOriginFileCount = that.downloadFileCount
                     that.$message({
                         type: 'success',
@@ -484,8 +561,130 @@
                 }
             },
 
+            // -第二步筛选下载内容相关代码
+            formatCategoryLoop(dir) {
+                let that = this
+                that.categoryTreeCheckedId.push(dir['id'])
+
+                if (dir['children'].length > 0) {
+                    for (let child_dir of dir['children']) {
+                        that.formatCategoryLoop(child_dir)
+                    }
+                }
+            },
+
+            formatSeedData() {
+                let that = this
+
+                // 整理目录格式
+                for (let dir of that.dirDict["children"]) {
+                    that.formatCategoryLoop(dir)
+                }
+                // 整理文件格式
+                let fileId = 1
+                for (let file of that.fileList) {
+                    that.fileTreeCheckedId.push(fileId)
+                    file['id'] = fileId++
+                }
+            },
+
+            handleCategoryClick(data) {
+                let that = this
+                that.fileTreedata = []
+                that.fileTreeCheckedId = []
+
+                for (let file of that.fileList) {
+                    if (file['last_category_id'] == data['id']) {
+                        that.fileTreedata.push(file)
+                        if (!that.discardFileIdSet.has(file['id'])) {
+                            that.fileTreeCheckedId.push(file['id'])
+                        }
+                    }
+                }
+            },
+
+            changeDiscardCategoryIdLoop(dir, isChecked) {
+                let that = this
+                dir.checked = isChecked
+                if (!isChecked) {
+                    that.discardCategoryIdSet.add(dir.id)
+                    for (let file of that.fileList) {
+                        if (file['last_category_id'] == dir['id']) {
+                            that.discardFileIdSet.add(file['id'])
+                        }
+                    }
+                } else {
+                    that.discardCategoryIdSet.delete(dir.id)
+                    for (let file of that.fileList) {
+                        if (file['last_category_id'] == dir['id']) {
+                            that.discardFileIdSet.delete(file['id'])
+                        }
+                    }
+                }
+
+                if (dir['childNodes'].length > 0) {
+                    for (let child_dir of dir['childNodes']) {
+                        that.changeDiscardCategoryIdLoop(child_dir, isChecked)
+                    }
+                }
+            },
+
+            handleCategoryCheckChange(dir) {
+                let that = this
+                let categoryNode = that.$refs.categoryTree.getNode(dir['id'])
+                let isChecked = categoryNode.checked
+                // 下载中不允许修改
+                if (that.downloadCategoryStep > 1) {
+                    that.$message({ type: 'waring', message: '不可在下载中修改下载内容' })
+                    categoryNode.checked = !isChecked
+                    return
+                }
+                // 清空文件显示
+                that.fileTreedata = []
+                that.fileTreeCheckedId = []
+
+                // 如果是要改为选定状态，那么要确保父节点都是选定状态
+                if (isChecked) {
+                    let parentNode = categoryNode.parent
+                    // 注意有一个隐藏的根目录，id为0，level为1
+                    if (categoryNode.level != 1) {
+                        while (parentNode.level >= 1) {
+                            if (parentNode.checked == false) {
+                                that.$message({ type: 'waring', message: '请确保父目录已经选定' })
+                                categoryNode.checked = false
+                                return
+                            }
+                            parentNode = parentNode.parent
+                        }
+                    }
+                }
+
+                that.changeDiscardCategoryIdLoop(categoryNode, isChecked)
+            },
+
+            handleFileCheckChange(file) {
+                let that = this
+                let fileNode = that.$refs.fileTree.getNode(file['id'])
+                let isChecked = fileNode.checked
+                // 下载中不允许修改
+                if (that.downloadCategoryStep > 1) {
+                    that.$message({ type: 'waring', message: '不可在下载中修改下载内容' })
+                    fileNode.checked = !isChecked
+                    return
+                }
+
+                if (!isChecked) {
+                    that.discardFileIdSet.add(file.id)
+                } else {
+                    that.discardFileIdSet.delete(file.id)
+                }
+            },
+
             async createCategoryLoop(currentDirHandle, currentDir, preDirPath) {
                 let that = this
+                if (that.discardCategoryIdSet.has(currentDir['id'])) {
+                    return
+                }
                 let cur_name = that.formatName(currentDir['name'], preDirPath)
                 that.dirHandleDict[currentDir['id']] = await currentDirHandle.getDirectoryHandle(cur_name, { create: true })
                 that.dirPathDict[currentDir['id']] = preDirPath + cur_name + '/'
@@ -512,6 +711,9 @@
                 that.downloadCategoryStep++
 
                 for (let file of that.fileList) {
+                    if (that.discardFileIdSet.has(file['id'])) {
+                        continue
+                    }
                     // 等待有空闲的写入流
                     while (that.writeHandleNum >= that.WRITEHANDLELIMIT) {
                         await that.sleep()
@@ -539,7 +741,7 @@
                 // 根据大小来判断本地是否已经有同样的文件了，所以能否复用历史文件则要依赖服务器有没有返回长度字段。
                 // 情况一：如果本地有了大小完全一样的文件,那么就直接打印信息,不再获取
                 // console.log(path, oldFileSize, fileSize, oldFileSize == fileSize)
-                if (oldFileSize == fileSize) {
+                if (oldFileSize == fileSize && fileSize != 0) {
                     // 已有文件则关掉请求资源的流操作
                     body.cancel()
                     that.recordDownloadCategoryData(path + "（本地已有）", fileSize)
