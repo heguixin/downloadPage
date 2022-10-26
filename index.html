@@ -711,7 +711,13 @@
                         // 禁用下载时利用缓存，任何一个资源都触发单独的下载
                         cache: "no-store"
                     }
-                )
+                ).catch(_ => {
+                    let fileSize = size == undefined ? Infinity : size
+                    that.notifyDownloadError(path, 0, 0, fileSize, url)
+                    that.pushDownloadProgress(fileSize)
+                    that.writeHandleNum -= 1
+                    return
+                })
                 let fileSize = parseInt(headers.get("Content-Length"))
 
                 // 根据大小来判断本地是否已经有同样的文件了，所以能否复用历史文件则要依赖服务器有没有返回长度字段。
