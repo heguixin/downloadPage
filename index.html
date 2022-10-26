@@ -20,18 +20,9 @@
             background: #d3dce6;
         }
 
-        .bg-purple-light {
-            background: #e5e9f2;
-        }
-
         .grid-content {
             border-radius: 4px;
             min-height: 36px;
-        }
-
-        .row-bg {
-            padding: 10px 0;
-            background-color: #f9fafc;
         }
     </style>
 </head>
@@ -118,6 +109,7 @@
             </el-table>
         </div>
 
+        <!-- 下载目录展示/选择 -->
         <el-drawer size="75%" title="即将下载以下内容" :visible.sync="drawerVisible" direction="btt">
             <el-container>
                 <el-container width="80%">
@@ -147,7 +139,8 @@
         </el-drawer>
     </div>
 </body>
-<!-- 依赖三个库文件 -->
+
+<!-- 依赖四个库文件 -->
 <script src="https://cdn.jsdelivr.net/npm/vue@2.7.8/dist/vue.js"></script>
 <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.3/theme-chalk/index.min.css">
 <script src="https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.3/index.min.js"></script>
@@ -158,9 +151,10 @@
         el: '#app',
         data: {
             // 设置模块
-            USEPASSWORD: true,
+            USEPASSWORD: true, //ECB加密，43位密码
             USEHTTPS: true,
             WRITEHANDLELIMIT: 6,
+
             // 通用模块
             DOWNLOADINGIDLIST: [3, 4],
             downloadedFileSize: 0,
@@ -231,12 +225,12 @@
                     return "未知大小"
                 }
 
-                if (val > 1073741824) {
-                    return (val / 1073741824).toFixed(2) + "GB"
-                } else if (val > 1048576) {
-                    return (val / 1048576).toFixed(1) + "MB"
-                } else if (val > 1024) {
-                    return (val / 1024).toFixed(0) + "KB"
+                if (val > Math.pow(1024, 3)) {
+                    return (val / Math.pow(1024, 3)).toFixed(2) + "GB"
+                } else if (val > Math.pow(1024, 2)) {
+                    return (val / Math.pow(1024, 2)).toFixed(1) + "MB"
+                } else if (val > Math.pow(1024, 1)) {
+                    return (val / Math.pow(1024, 1)).toFixed(0) + "KB"
                 } else {
                     return val + "B"
                 }
@@ -255,13 +249,15 @@
 
                 // 已知以下字符是不合乎规范的
                 // 英文字符：~*:<>?|
-                let illegalCharList = name.match(/[~*:<>?|]/g)
+                let pattern = /[~*:<>?|]/g
+                let illegalCharList = name.match(pattern)
+                let newName = name.replace(pattern, '-')
                 if (illegalCharList != null) {
                     let warningMessage =
                         '<p>修改前目录名:' + name + '</p>' +
                         '<p>非法字符列表（转为-）[' + illegalCharList.join(',') + ']</p>' +
                         '<p>非法字符个数:' + illegalCharList.length + '</p>' +
-                        '<p>修改后目录路径:' + prePath + name.replace(/[~*:<>?|]/g, '-') + '/' + '</p>'
+                        '<p>修改后目录路径:' + prePath + newName + '/' + '</p>'
 
                     that.$notify.warning({
                         title: '以下目录的名字已经修改',
@@ -270,7 +266,7 @@
                         dangerouslyUseHTMLString: true,
                     })
                 }
-                return name.replace(/[~*:<>?|]/g, '-')
+                return newName
             },
 
             formatUrl(url) {
@@ -288,8 +284,8 @@
                     }
                     total += value.length;
                     // headers有可能不告知大小，然后让progress超过100的进度引发错误，所以最高进度设置为100防止抛出错误
-                    let now_progress = parseFloat((total / fileSize * 100).toFixed(2))
-                    recordData.progress = that.formatProgress(now_progress)
+                    let nowProgress = parseFloat((total / fileSize * 100).toFixed(2))
+                    recordData.progress = that.formatProgress(nowProgress)
                     read();
                 });
                 read();
@@ -326,12 +322,12 @@
                 if (that.discardFileIdSet.size > 0) {
                     that.downloadCategorySize = Infinity
                 }
+
                 let tipText = '<p>压缩包大小预估:' + that.unitConversion(that.downloadCategorySize) + '</p>' +
                     '<p>文件个数:' + that.downloadFileCount + '</p>' +
                     '<br/>' +
                     '<p><strong>下载开始后，不可关闭当前页面，否则将会中断下载任务！<strong></p>' +
                     '<p>尽可能下载所有文件，异常文件会打印错误记录，截图联系管理员!</p>'
-
                 that.$alert(tipText, '下载确认',
                     {
                         confirmButtonText: '确定',
@@ -351,8 +347,9 @@
                 let that = this
                 if (that.DOWNLOADINGIDLIST.indexOf(that.downloadCategoryStep) > -1) {
                     return
-                } 
-                else if(that.downloadCategoryStep > 0){
+                }
+                else if (that.downloadCategoryStep > 0) {
+                    // 刷新页面
                     location.reload()
                     return
                 }
@@ -405,8 +402,10 @@
                 that.downloadedErrorRecordData = []
 
                 // 下载信息模块
-                that.dirHandleDict = {}
+                that.dirDict = []
                 that.dirPathDict = { 0: '' }
+                that.fileList = []
+                that.dirHandleDict = {}
             },
 
             // 下载记录相关
@@ -431,7 +430,7 @@
                 }
 
                 // 打印下载结果，允许关闭页面
-                await that.sleep(1000)
+                await that.sleep()
                 that.downloadCategoryStep++
                 that.downloadProgress = 100
                 that.$notify.success({
@@ -443,20 +442,20 @@
 
             pushDownloadProgress(fileSize) {
                 let that = this
-                let now_progress = 0
+                let nowProgress = 0
 
                 that.downloadFileCount -= 1
                 // 如果是未知目录大小，总进度条就按照文件个数推进
                 // 如果是已知目录大小，总进度条就按照目录大小推进
                 if (that.downloadCategorySize == Infinity) {
-                    now_progress = parseFloat(((that.downloadStartFileCount - that.downloadFileCount) / that.downloadStartFileCount * 100).toFixed(2))
+                    nowProgress = parseFloat(((that.downloadStartFileCount - that.downloadFileCount) / that.downloadStartFileCount * 100).toFixed(2))
                     // 防止进度条溢出
-                    that.downloadProgress = that.formatProgress(now_progress)
+                    that.downloadProgress = that.formatProgress(nowProgress)
                 } else {
                     that.downloadedFileSize += fileSize == Infinity ? 0 : fileSize
-                    now_progress = parseFloat((that.downloadedFileSize / that.downloadCategorySize * 100).toFixed(2))
+                    nowProgress = parseFloat((that.downloadedFileSize / that.downloadCategorySize * 100).toFixed(2))
                     // 防止进度条溢出
-                    that.downloadProgress = that.formatProgress(now_progress)
+                    that.downloadProgress = that.formatProgress(nowProgress)
                 }
             },
 
@@ -487,17 +486,25 @@
                     'filePath': filePath,
                     'url': fileUrl,
                 })
+            },
 
-                // 是否需要打印出来异常的文件
-                // let errTip = '<p>文件:</p><p>' + filePath + '</p>' +
-                //     '<p>状态码:' + status + '</p>' +
-                //     '<p>状态信息:' + statusText + '</p>'
-                // that.$notify.error({
-                //     title: '文件异常',
-                //     message: errTip,
-                //     duration: 0,
-                //     dangerouslyUseHTMLString: true,
-                // })
+            // -第一步获取种子信息
+            async getSeedInfor(file, password = null) {
+                let that = this
+                let seedDict = {}
+
+                //读取文件内容
+                let text = await file.text()
+                seedDict = password == null ? JSON.parse(text) : JSON.parse(that.AES_ECB_DECRYPT(text, password)) // 是否解密
+                that.dirDict = seedDict['dirDict']
+                that.fileList = seedDict['fileList']
+                // 如果是未知目录大小，总进度条就按照文件个数推进
+                // 如果是已知目录大小，总进度条就按照目录大小推进
+                that.downloadCategorySize = seedDict['downloadCategorySize'] == undefined ? Infinity : seedDict['downloadCategorySize']
+                that.downloadFileCount = seedDict['fileList'].length
+                that.downloadStartFileCount = that.downloadFileCount
+                that.downloadOriginFileCount = that.downloadFileCount
+                that.$message({ type: 'success', message: '解密成功' })
             },
 
             async parseSeedInfor() {
@@ -516,24 +523,8 @@
                         inputErrorMessage: '密码格式不正确'
                     }).then(async ({ value, action }) => {
                         if (action == 'confirm') {
-                            //读取文件内容
-                            let text = await file.text()
-                            // 解密
-                            seedDict = JSON.parse(that.AES_ECB_DECRYPT(text, value))
-                            that.dirDict = seedDict['dirDict']
-                            that.fileList = seedDict['fileList']
-                            // 如果是未知目录大小，总进度条就按照文件个数推进
-                            // 如果是已知目录大小，总进度条就按照目录大小推进
-                            that.downloadCategorySize = seedDict['downloadCategorySize'] == undefined ? Infinity : seedDict['downloadCategorySize']
-                            that.downloadFileCount = seedDict['fileList'].length
-                            that.downloadStartFileCount = that.downloadFileCount
-                            that.downloadOriginFileCount = that.downloadFileCount
-                            that.$message({
-                                type: 'success',
-                                message: '解密成功'
-                            });
-                        }
-                        else {
+                            await that.getSeedInfor(file, value)
+                        } else {
                             that.$message({
                                 type: 'success',
                                 message: '取消输入'
@@ -543,21 +534,7 @@
                         throw '密码错误'
                     });
                 } else {
-                    let text = await file.text()
-                    // 解密
-                    seedDict = JSON.parse(text)
-                    that.dirDict = seedDict['dirDict']
-                    that.fileList = seedDict['fileList']
-                    // 如果是未知目录大小，总进度条就按照文件个数推进
-                    // 如果是已知目录大小，总进度条就按照目录大小推进
-                    that.downloadCategorySize = seedDict['downloadCategorySize'] == undefined ? Infinity : seedDict['downloadCategorySize']
-                    that.downloadFileCount = seedDict['fileList'].length
-                    that.downloadStartFileCount = that.downloadFileCount
-                    that.downloadOriginFileCount = that.downloadFileCount
-                    that.$message({
-                        type: 'success',
-                        message: '解密成功'
-                    });
+                    await that.getSeedInfor(file)
                 }
             },
 
@@ -639,10 +616,6 @@
                     categoryNode.checked = !isChecked
                     return
                 }
-                // 清空文件显示
-                that.fileTreedata = []
-                that.fileTreeCheckedId = []
-
                 // 如果是要改为选定状态，那么要确保父节点都是选定状态
                 if (isChecked) {
                     let parentNode = categoryNode.parent
@@ -659,6 +632,9 @@
                     }
                 }
 
+                // 清空文件显示
+                that.fileTreedata = []
+                that.fileTreeCheckedId = []
                 that.changeDiscardCategoryIdLoop(categoryNode, isChecked)
             },
 
