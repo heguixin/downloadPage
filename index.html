@@ -719,6 +719,15 @@
                     return
                 })
                 let fileSize = parseInt(headers.get("Content-Length"))
+                // 优先相信报文头部反馈的大小，次之相信种子文件给予的大小，否则最后用Infinity来代表未知大小
+                fileSize = isNaN(fileSize) ? (size == undefined ? Infinity : size) : fileSize
+
+                if (!ok) {
+                    that.notifyDownloadError(path, status, statusText, fileSize, url)
+                    that.pushDownloadProgress(fileSize)
+                    that.writeHandleNum -= 1
+                    return
+                }
 
                 // 根据大小来判断本地是否已经有同样的文件了，所以能否复用历史文件则要依赖服务器有没有返回长度字段。
                 // 情况一：如果本地有了大小完全一样的文件,那么就直接打印信息,不再获取
@@ -738,18 +747,6 @@
                 // 情况三：其他情况都视为新下载文件
 
                 const writable = await fileHandle.createWritable()
-
-                // 优先相信报文头部反馈的大小，次之相信种子文件给予的大小，最后用Infinity来代表未知大小
-                fileSize = isNaN(fileSize) ? (size == undefined ? Infinity : size) : fileSize
-
-                if (!ok) {
-                    that.notifyDownloadError(path, status, statusText, fileSize, url)
-                    that.pushDownloadProgress(fileSize)
-                    writable.close()
-                    that.writeHandleNum -= 1
-                    return
-                }
-
                 const [teeProgress, teeWrite] = body.tee()
 
                 // 记录每一个文件的下载进度
