@@ -145,6 +145,8 @@
 <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.3/theme-chalk/index.min.css">
 <script src="https://cdn.bootcdn.net/ajax/libs/element-ui/2.15.3/index.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+<script src="https://cdn.bootcdn.net/ajax/libs/spark-md5/3.0.2/spark-md5.js"></script>
+<script src="https://unpkg.com/axios/dist/axios.min.js"></script>
 
 <script>
     new Vue({
@@ -153,6 +155,7 @@
             // 设置模块
             USEPASSWORD: true, //ECB加密，43位密码
             USEHTTPS: true,
+            USEMD5CHECKREPEAT: true,
             WRITEHANDLELIMIT: 6,
 
             // 通用模块
@@ -221,7 +224,7 @@
 
             unitConversion(val) {
                 // 特殊处理：用Infinity来代表该文件的大小未知，未知可能是因为资源服务器并不告诉前端资源的大小
-                if (val == Infinity) {
+                if (val == Infinity || val == undefined) {
                     return "未知大小"
                 }
 
@@ -234,6 +237,35 @@
                 } else {
                     return val + "B"
                 }
+            },
+
+            async getFileMD5(file) {
+                return new Promise((resolve, reject) => {
+                    let blobSlice = File.prototype.slice || File.prototype.mozSlice || File.prototype.webkitSlice
+                    let fileReader = new FileReader()
+                    let chunkSize = 2097152 // read in chunks of 2MB
+                    let chunks = Math.ceil(file.size / chunkSize)
+                    let currentChunk = 0
+                    let spark = new SparkMD5.ArrayBuffer()
+                    fileReader.onload = function (e) {
+                        spark.append(e.target.result) // append array buffer
+                        currentChunk++
+                        if (currentChunk < chunks) {
+                            loadNext()
+                        } else {
+                            resolve(spark.end())
+                        }
+                    }
+                    fileReader.onerror = function () {
+                        console.warn('FileReader error.')
+                    }
+                    function loadNext() {
+                        let start = currentChunk * chunkSize
+                        let end = ((start + chunkSize) >= file.size) ? file.size : start + chunkSize
+                        fileReader.readAsArrayBuffer(blobSlice.call(file, start, end))
+                    }
+                    loadNext()
+                })
             },
 
             formatProgress(percentage) {
@@ -443,6 +475,7 @@
             pushDownloadProgress(fileSize) {
                 let that = this
                 let nowProgress = 0
+                fileSize = fileSize == undefined ? Infinity : fileSize
 
                 that.downloadFileCount -= 1
                 // 如果是未知目录大小，总进度条就按照文件个数推进
@@ -682,6 +715,46 @@
                 }
             },
 
+            // 这个函数需要根据实际应用的场景进行修改
+            // 目的是根据实际情况获取到文件的md5和size
+            // 关键是注意实际的url和response.data格式问题
+            async checkRepeatBySizeAndMD5(file, url) {
+                let that = this
+                let fileUrl = url.split('?')[0]
+
+                // step1:先判断大小
+                let serverSize = undefined
+                await axios(fileUrl + '/info?avinfo')
+                    .then(response => {
+                        serverSize = response.data['format']['size']
+                    })
+                    .catch(error => {
+                        that.$notify.warning({ title: '获取服务器文件大小错误:' + file.name, message: error, duration: 0 })
+                    })
+                // 如果服务器查不到大小，那么就直接查md5
+                if (serverSize != undefined && serverSize != file.size) {
+                    return false
+                }
+
+                // step2:再判断MD5
+                let serverMD5 = undefined
+                await axios(fileUrl + '/info?md5')
+                    .then(response => {
+                        serverMD5 = response.data['md5']
+                    })
+                    .catch(error => {
+                        that.$notify.error({ title: '获取服务器文件MD5错误:' + file.name, message: error, duration: 0 })
+                    })
+                // 如果查不到MD5，那么认为文件不相同，打印错误信息，并且触发下载逻辑
+                if (serverMD5 == undefined) {
+                    return false
+                }
+                let fileMD5 = await that.getFileMD5(file)
+
+                // 判断MD5是否相同
+                return serverMD5 == fileMD5
+            },
+
             async downloadFile() {
                 let that = this
                 that.downloadCategoryStep++
@@ -690,15 +763,37 @@
                     if (that.discardFileIdSet.has(file['id'])) {
                         continue
                     }
-                    // 等待有空闲的写入流
-                    while (that.writeHandleNum >= that.WRITEHANDLELIMIT) {
-                        await that.sleep()
-                    }
-                    that.writeHandleNum += 1
-                    let fileHandle = await that.dirHandleDict[file['last_category_id']].getFileHandle(file['name'], { create: true });
-                    let oldFileHandle = await fileHandle.getFile()
-                    that.writeURLToFile(fileHandle, file['url'], that.dirPathDict[file['last_category_id']] + file['name'], file['size'], oldFileHandle.size)
+                    that.downloadOneFile(file)
                 }
+            },
+
+            async downloadOneFile(file) {
+                let that = this
+                let state = ''
+                let fileHandle = await that.dirHandleDict[file['last_category_id']].getFileHandle(file['name'], { create: true })
+                let oldFileHandle = await fileHandle.getFile()
+
+                // 如果本地文件的大小为0，那么必定要下载文件，不需要判断md5
+                if (that.USEMD5CHECKREPEAT && oldFileHandle.size != 0) {
+                    let checkMD5Same = await that.checkRepeatBySizeAndMD5(oldFileHandle, file['url'])
+                    if (checkMD5Same) {
+                        that.recordDownloadCategoryData(that.dirPathDict[file['last_category_id']] + file['name'] + "（本地已有-根据MD5判断）", oldFileHandle.size)
+                        that.pushDownloadProgress(oldFileHandle.size)
+                        return
+                    } else if (!checkMD5Same && oldFileHandle.size > 0) {
+                        state = '（更新文件-根据MD5判断）'
+                    }
+                }
+
+                // 等待有空闲的写入流
+                while (that.writeHandleNum >= that.WRITEHANDLELIMIT) {
+                    await that.sleep()
+                }
+                that.writeHandleNum += 1
+                that.writeURLToFile(fileHandle, file['url'], that.dirPathDict[file['last_category_id']] + file['name'] + state, file['size'], oldFileHandle.size)
+                    .finally(() =>{
+                        that.writeHandleNum -= 1
+                    })
             },
 
             async writeURLToFile(fileHandle, url, path, size, oldFileSize) {
@@ -715,7 +810,6 @@
                     let fileSize = size == undefined ? Infinity : size
                     that.notifyDownloadError(path, 0, 0, fileSize, url)
                     that.pushDownloadProgress(fileSize)
-                    that.writeHandleNum -= 1
                     return
                 })
                 let fileSize = parseInt(headers.get("Content-Length"))
@@ -725,26 +819,27 @@
                 if (!ok) {
                     that.notifyDownloadError(path, status, statusText, fileSize, url)
                     that.pushDownloadProgress(fileSize)
-                    that.writeHandleNum -= 1
                     return
                 }
 
-                // 根据大小来判断本地是否已经有同样的文件了，所以能否复用历史文件则要依赖服务器有没有返回长度字段。
-                // 情况一：如果本地有了大小完全一样的文件,那么就直接打印信息,不再获取
-                // console.log(path, oldFileSize, fileSize, oldFileSize == fileSize)
-                if (oldFileSize == fileSize && fileSize != 0) {
-                    // 已有文件则关掉请求资源的流操作
-                    body.cancel()
-                    that.recordDownloadCategoryData(path + "（本地已有）", fileSize)
-                    that.pushDownloadProgress(fileSize)
-                    that.writeHandleNum -= 1
-                    return
+                // 如果不选择MD5做文件去重判断的话，那么我们会默认使用大小判断
+                if (!that.USEMD5CHECKREPEAT) {
+                    // 根据大小来判断本地是否已经有同样的文件了，所以能否复用历史文件则要依赖服务器有没有返回长度字段。
+                    // 情况一：如果本地有了大小完全一样的文件,那么就直接打印信息,不再获取
+                    // console.log(path, oldFileSize, fileSize, oldFileSize == fileSize)
+                    if (oldFileSize == fileSize && fileSize != 0) {
+                        // 已有文件则关掉请求资源的流操作
+                        body.cancel()
+                        that.recordDownloadCategoryData(path + "（本地已有-仅根据大小判断）", fileSize)
+                        that.pushDownloadProgress(fileSize)
+                        return
+                    }
+                    // 情况二：如果本地已经有文件,但是和服务器的文件大小不一样，那么就更新这个文件
+                    else if (oldFileSize != fileSize && oldFileSize != 0) {
+                        path += "（更新文件-仅根据大小判断）"
+                    }
+                    // 情况三：其他情况都视为新下载文件
                 }
-                // 情况二：如果本地已经有文件,但是和服务器的文件大小不一样，那么就更新这个文件
-                else if (oldFileSize != fileSize && oldFileSize != 0) {
-                    path += "（更新文件）"
-                }
-                // 情况三：其他情况都视为新下载文件
 
                 const writable = await fileHandle.createWritable()
                 const [teeProgress, teeWrite] = body.tee()
@@ -756,7 +851,6 @@
                 // Stream the response into the file.
                 await teeWrite.pipeTo(writable).finally(() => {
                     that.pushDownloadProgress(fileSize)
-                    that.writeHandleNum -= 1
                 });
                 // pipeTo() closes the destination pipe by default, no need to close it.
             },
