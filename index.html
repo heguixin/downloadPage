@@ -172,7 +172,8 @@
                 <el-col :span="24">
                     <div class="grid-content bg-purple-dark">
                         <span>是否使用MD5做文件去重判断</span>
-                        <el-tooltip effect="dark" content="MD5判断会使判断文件是否已经下载更加准确，但是会降低一点速度！不勾选则只根据文件大小判断是否已经下载"
+                        <el-tooltip effect="dark"
+                            content="MD5判断会使判断文件是否已经下载更加准确，但会降低一点速度！不勾选则只根据文件大小判断是否已经下载。只有在你修改过本地文件，或者想更新文件到最新版本时才需要勾选！断点续传不需要勾选！"
                             placement="left-start">
                             <el-switch v-model="USEMD5CHECKREPEAT" :disabled='downloadCategoryStep != 0'>
                             </el-switch>
@@ -200,7 +201,7 @@
             // 设置模块
             USEPASSWORD: true, //ECB加密，43位密码
             USEHTTPS: true,
-            USEMD5CHECKREPEAT: true,
+            USEMD5CHECKREPEAT: false,
             WRITEHANDLELIMIT: 6,
             SETTINGKEYCODE: 112, // 点击F1打开下载器的设置页面
 
@@ -885,11 +886,11 @@
                 }
 
                 // 如果不选择MD5做文件去重判断的话，那么我们会默认使用大小判断
-                if (!that.USEMD5CHECKREPEAT) {
+                // 如果本地文件大小为0，那么认定为必定没有下载过的
+                if (!that.USEMD5CHECKREPEAT && oldFileSize != 0) {
                     // 根据大小来判断本地是否已经有同样的文件了，所以能否复用历史文件则要依赖服务器有没有返回长度字段。
                     // 情况一：如果本地有了大小完全一样的文件,那么就直接打印信息,不再获取
-                    // console.log(path, oldFileSize, fileSize, oldFileSize == fileSize)
-                    if (oldFileSize == fileSize && fileSize != 0) {
+                    if (oldFileSize == fileSize) {
                         // 已有文件则关掉请求资源的流操作
                         body.cancel()
                         that.recordDownloadCategoryData(path + "（本地已有-仅根据大小判断）", fileSize)
@@ -897,7 +898,7 @@
                         return
                     }
                     // 情况二：如果本地已经有文件,但是和服务器的文件大小不一样，那么就更新这个文件
-                    else if (oldFileSize != fileSize && oldFileSize != 0) {
+                    else if (oldFileSize != fileSize) {
                         path += "（更新文件-仅根据大小判断）"
                     }
                     // 情况三：其他情况都视为新下载文件
