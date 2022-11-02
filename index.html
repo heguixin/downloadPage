@@ -137,6 +137,51 @@
                 </el-button>
             </el-footer>
         </el-drawer>
+
+        <el-drawer size="25%" title="设置下载器参数" :visible.sync="settingInforVisible" direction="rtl">
+            <el-row>
+                <el-col :span="24">
+                    <div class="grid-content bg-purple-dark">
+                        <span>提示：仅在第一步可以设置参数</span>
+                    </div>
+                </el-col>
+            </el-row>
+            <el-row>
+                <el-col :span="24">
+                    <div class="grid-content bg-purple-dark">
+                        <span>是否使用密码解析种子文件</span>
+                        <el-tooltip content="种子如果被加密乱码了，那么就需要勾选此项。" placement="left-start">
+                            <el-switch v-model="USEPASSWORD" :disabled='downloadCategoryStep != 0'>
+                            </el-switch>
+                        </el-tooltip>
+                    </div>
+                </el-col>
+            </el-row>
+            <el-row>
+                <el-col :span="24">
+                    <div class="grid-content bg-purple-dark">
+                        <span>是否使用HTTPS协议下载资源文件</span>
+                        <el-tooltip content="HTTPS会更加安全快捷，不过需要资源服务器支持HTTPS协议" placement="left-start">
+                            <el-switch v-model="USEHTTPS" :disabled='downloadCategoryStep != 0'>
+                            </el-switch>
+                        </el-tooltip>
+                    </div>
+                </el-col>
+            </el-row>
+            <el-row>
+                <el-col :span="24">
+                    <div class="grid-content bg-purple-dark">
+                        <span>是否使用MD5做文件去重判断</span>
+                        <el-tooltip effect="dark" content="MD5判断会使判断文件是否已经下载更加准确，但是会降低一点速度！不勾选则只根据文件大小判断是否已经下载"
+                            placement="left-start">
+                            <el-switch v-model="USEMD5CHECKREPEAT" :disabled='downloadCategoryStep != 0'>
+                            </el-switch>
+                        </el-tooltip>
+                    </div>
+                </el-col>
+            </el-row>
+            <el-row>
+        </el-drawer>
     </div>
 </body>
 
@@ -157,6 +202,7 @@
             USEHTTPS: true,
             USEMD5CHECKREPEAT: true,
             WRITEHANDLELIMIT: 6,
+            SETTINGKEYCODE: 112, // 点击F1打开下载器的设置页面
 
             // 通用模块
             DOWNLOADINGIDLIST: [3, 4],
@@ -167,6 +213,7 @@
             downloadFileCount: 0,
             downloadErrorFileSet: new Set(),
             downloadInforVisible: false,
+            settingInforVisible: false,
             writeHandleNum: 0,
 
             // 选择/查看下载资源
@@ -192,6 +239,12 @@
         },
 
         mounted() {
+            let that = this
+            document.onkeydown = function (event) {
+                if (window.event.keyCode === that.SETTINGKEYCODE) {
+                    that.settingInforVisible = true
+                }
+            }
         },
 
         watch: {
@@ -395,7 +448,7 @@
                         that.downloadInforVisible = true
                     })
                     .catch(error => {
-                        that.$notify.warning({ title: '取消', message: error })
+                        that.$notify.warning({ title: '异常提示', message: error })
                     })
             },
 
@@ -417,6 +470,7 @@
                 that.downloadFileCount = 0
                 that.downloadErrorFileSet = new Set()
                 that.downloadInforVisible = false
+                that.settingInforVisible = false
                 that.writeHandleNum = 0
 
                 // 选择/查看下载资源
@@ -543,6 +597,9 @@
             async parseSeedInfor() {
                 let that = this
                 let [fileHandle] = await window.showOpenFilePicker()
+                    .catch(() => {
+                        throw '取消选择种子文件'
+                    });
                 let seedDict = {}
 
                 //获取文件
@@ -550,6 +607,8 @@
 
                 if (that.USEPASSWORD) {
                     return that.$prompt('请输入提取码', '提示', {
+                        closeOnClickModal: false,
+                        closeOnPressEscape: false,
                         confirmButtonText: '确定',
                         cancelButtonText: '取消',
                         inputPattern: /[0-9a-zA-Z]{43}/,
@@ -557,17 +616,19 @@
                     }).then(async ({ value, action }) => {
                         if (action == 'confirm') {
                             await that.getSeedInfor(file, value)
-                        } else {
-                            that.$message({
-                                type: 'success',
-                                message: '取消输入'
-                            });
+                                .catch(() => {
+                                    throw '获取目录失败，请检查1.是否需要输入密码2.密码是否准确'
+                                });
                         }
-                    }).catch(() => {
-                        throw '密码错误'
+                    }).catch(error => {
+                        if (error == 'cancel') { throw '取消解密目录' }
+                        else { throw error }
                     });
                 } else {
                     await that.getSeedInfor(file)
+                        .catch(() => {
+                            throw '获取目录失败，请检查1.是否需要输入密码'
+                        });
                 }
             },
 
@@ -791,7 +852,7 @@
                 }
                 that.writeHandleNum += 1
                 that.writeURLToFile(fileHandle, file['url'], that.dirPathDict[file['last_category_id']] + file['name'] + state, file['size'], oldFileHandle.size)
-                    .finally(() =>{
+                    .finally(() => {
                         that.writeHandleNum -= 1
                     })
             },
