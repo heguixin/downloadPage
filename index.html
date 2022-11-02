@@ -782,6 +782,7 @@
             async checkRepeatBySizeAndMD5(file, url) {
                 let that = this
                 let fileUrl = url.split('?')[0]
+                fileUrl = that.formatUrl(fileUrl)
 
                 // step1:先判断大小
                 let serverSize = undefined
