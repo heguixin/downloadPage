@@ -678,17 +678,18 @@
             changeDiscardCategoryIdLoop(dir, isChecked) {
                 let that = this
                 dir.checked = isChecked
+                let dir_id = dir.data.id
                 if (!isChecked) {
-                    that.discardCategoryIdSet.add(dir.id)
+                    that.discardCategoryIdSet.add(dir_id)
                     for (let file of that.fileList) {
-                        if (file['last_category_id'] == dir['id']) {
+                        if (file['last_category_id'] == dir_id) {
                             that.discardFileIdSet.add(file['id'])
                         }
                     }
                 } else {
-                    that.discardCategoryIdSet.delete(dir.id)
+                    that.discardCategoryIdSet.delete(dir_id)
                     for (let file of that.fileList) {
-                        if (file['last_category_id'] == dir['id']) {
+                        if (file['last_category_id'] == dir_id) {
                             that.discardFileIdSet.delete(file['id'])
                         }
                     }
@@ -740,6 +741,11 @@
                 // 下载中不允许修改
                 if (that.downloadCategoryStep > 1) {
                     that.$message({ type: 'waring', message: '不可在下载中修改下载内容' })
+                    fileNode.checked = !isChecked
+                    return
+                }
+                if(that.discardCategoryIdSet.has(file.last_category_id)){
+                    that.$message({ type: 'waring', message: '请确保父目录已经选定' })
                     fileNode.checked = !isChecked
                     return
                 }
@@ -823,7 +829,7 @@
                 that.downloadCategoryStep++
 
                 for (let file of that.fileList) {
-                    if (that.discardFileIdSet.has(file['id'])) {
+                    if (that.discardFileIdSet.has(file['id']) || that.discardCategoryIdSet.has(file['last_category_id'])) {
                         continue
                     }
                     that.downloadOneFile(file)
