@@ -744,7 +744,7 @@
                     fileNode.checked = !isChecked
                     return
                 }
-                if(that.discardCategoryIdSet.has(file.last_category_id)){
+                if (that.discardCategoryIdSet.has(file.last_category_id)) {
                     that.$message({ type: 'waring', message: '请确保父目录已经选定' })
                     fileNode.checked = !isChecked
                     return
@@ -918,9 +918,12 @@
 
                 // 流式保存文件和记录总进度
                 // Stream the response into the file.
-                await teeWrite.pipeTo(writable).finally(() => {
-                    that.pushDownloadProgress(fileSize)
-                });
+                await teeWrite.pipeTo(writable)
+                    .catch(_ => {
+                        that.notifyDownloadError(path, status, statusText, fileSize, url)
+                    }).finally(() => {
+                        that.pushDownloadProgress(fileSize)
+                    });
                 // pipeTo() closes the destination pipe by default, no need to close it.
             },
 
