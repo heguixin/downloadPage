@@ -597,6 +597,10 @@
 
             async parseSeedInfor() {
                 let that = this
+                if (window.showOpenFilePicker == undefined) {
+                    throw '请使用谷歌浏览器打开此网页，该浏览器暂不支持下载文件夹功能！'
+                    return
+                }
                 let [fileHandle] = await window.showOpenFilePicker()
                     .catch(() => {
                         throw '取消选择种子文件'
